@@ -2,95 +2,40 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Jergan.extra - Code with Blocks or Scripts</title>
+  <title>Jergan.extra - Create and Code</title>
   <style>
     html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      font-family: sans-serif;
-      background: #f7f7f7;
-      user-select: none;
+      margin: 0; padding: 0; height: 100%;
+      font-family: sans-serif; overflow: hidden;
     }
-    #age-picker, #main-editor { height: 100%; }
+    #age-picker, #main-editor { display: none; height: 100%; }
     #age-picker {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
     }
-    .btn {
-      padding: 12px 20px;
-      margin: 10px;
-      font-size: 18px;
-      cursor: pointer;
-      background: #3b82f6;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      transition: background 0.2s;
-    }
-    .btn:hover { background: #2563eb; }
-
+    .btn { padding: 12px 20px; margin: 10px; font-size: 18px; cursor: pointer; }
     #main-container { display: flex; height: 100%; }
-    #blocklyDiv { height: 100%; width: 60%; }
-
+    #blocklyDiv { height: 100%; width: 55%; }
     #right-panel {
-      width: 40%;
-      display: flex;
-      flex-direction: column;
-      padding: 10px;
-      box-sizing: border-box;
-      background: #fff;
-      border-left: 2px solid #ddd;
+      width: 45%; display: flex; flex-direction: column;
+      padding: 10px; box-sizing: border-box;
     }
-
-    #sprite-buttons { margin-bottom: 10px; }
-    #sprite-buttons button, select { margin-right: 5px; padding: 8px 12px; }
-
     #stage {
-      flex: 1;
-      background: #e0e0e0;
-      border: 2px solid #ccc;
-      position: relative;
-      overflow: hidden;
-      cursor: grab;
+      flex: 1; background: #bde0fe; border: 2px solid #333;
+      border-radius: 8px; position: relative; overflow: hidden;
     }
-
-    #stage:active { cursor: grabbing; }
-
-    #script-editor {
-      display: none;
-      height: 150px;
-      background: #f0f0f0;
-      overflow: auto;
-      font-family: monospace;
-      padding: 10px;
+    canvas { width: 100%; height: 100%; cursor: grab; }
+    #sprite-controls {
+      display: flex; gap: 10px; margin-top: 10px;
+      justify-content: space-around;
     }
-
-    /* Drawing modal */
-    #draw-modal {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      background: rgba(0,0,0,0.6);
-      display: none;
-      justify-content: center;
-      align-items: center;
-      z-index: 100;
-    }
-    #draw-area {
-      background: #fff;
-      padding: 20px;
-      border-radius: 10px;
-      text-align: center;
-    }
+    button { padding: 8px 14px; cursor: pointer; border-radius: 8px; }
   </style>
   <script src="https://unpkg.com/blockly/blockly.min.js"></script>
 </head>
 <body>
 
-<!-- Age Picker -->
+<!-- Age Selector -->
 <div id="age-picker">
   <h1>Welcome to Jergan.extra</h1>
   <p>Choose your mode:</p>
@@ -99,271 +44,50 @@
 </div>
 
 <!-- Main Editor -->
-<div id="main-editor" style="display:none;">
+<div id="main-editor">
   <div id="main-container">
     <div id="blocklyDiv"></div>
     <div id="right-panel">
-      <div id="sprite-buttons">
+      <canvas id="stage" width="480" height="360"></canvas>
+      <div id="sprite-controls">
         <button onclick="addSprite()">Add Sprite</button>
         <button onclick="deleteSprite()">Delete Sprite</button>
-        <button onclick="openDrawTool()">Draw Sprite</button>
-        <select id="spriteSelect" onchange="selectSprite()"></select>
+        <button onclick="drawSprite()">Draw Sprite</button>
+        <select id="spriteSelect"></select>
       </div>
-      <canvas id="stage" width="400" height="300"></canvas>
-      <button class="btn" onclick="generateCode()">Generate Code</button>
-      <button class="btn" onclick="runCode()">Run</button>
-      <button class="btn" onclick="stopCode()">Stop</button>
-      <pre id="script-editor"></pre>
+      <button onclick="generateCode()">Generate Code</button>
+      <button onclick="runCode()">Run</button>
+      <button onclick="stopCode()">Stop</button>
+      <pre id="script-editor" style="display:none; background:#f0f0f0; height:200px; overflow:auto;"></pre>
     </div>
-  </div>
-</div>
-
-<!-- Drawing Modal -->
-<div id="draw-modal">
-  <div id="draw-area">
-    <h3>Draw your sprite</h3>
-    <input type="color" id="colorPicker" value="#000000"><br><br>
-    <canvas id="draw-canvas" width="200" height="200" style="border:1px solid #ccc;cursor:crosshair;"></canvas><br>
-    <button onclick="saveDrawing()">Save Sprite</button>
-    <button onclick="closeDrawTool()">Cancel</button>
   </div>
 </div>
 
 <script>
 window.addEventListener("DOMContentLoaded", () => {
-  let workspace = null;
-  let currentMode = 'young';
-  let sprites = [];
+  let workspace, interpreter, currentMode = "young", runTimer;
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  const sprites = [];
   let selectedSprite = null;
-  let ctx = null;
-  let running = false;
-  let dragSprite = null;
-  let offsetX = 0, offsetY = 0;
+  let projectId = null, projectUrl = null;
 
-  // Drawing tool setup
-  const drawModal = document.getElementById('draw-modal');
-  const drawCanvas = document.getElementById('draw-canvas');
-  const drawCtx = drawCanvas.getContext('2d');
-  let drawing = false;
-
-  drawCanvas.addEventListener('mousedown', e => {
-    drawing = true;
-    drawCtx.moveTo(e.offsetX, e.offsetY);
-  });
-  drawCanvas.addEventListener('mousemove', e => {
-    if (!drawing) return;
-    drawCtx.strokeStyle = document.getElementById('colorPicker').value;
-    drawCtx.lineWidth = 4;
-    drawCtx.lineTo(e.offsetX, e.offsetY);
-    drawCtx.stroke();
-  });
-  drawCanvas.addEventListener('mouseup', () => drawing = false);
-
-  function openDrawTool() { drawModal.style.display = 'flex'; }
-  function closeDrawTool() { drawModal.style.display = 'none'; }
-
-  window.openDrawTool = openDrawTool;
-  window.closeDrawTool = closeDrawTool;
-
-  function saveDrawing() {
-    const img = new Image();
-    img.src = drawCanvas.toDataURL();
-    img.onload = () => {
-      const sprite = {
-        x: 200, y: 150, visible: true, image: img,
-        name: 'Sprite' + (sprites.length + 1)
-      };
-      sprites.push(sprite);
-      updateSpriteSelect();
-      selectedSprite = sprite;
-      drawAllSprites();
-      drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-      closeDrawTool();
-    };
-  }
-  window.saveDrawing = saveDrawing;
-
-  // Blockly setup
-  function initBlockly() {
-    const toolbox = `
-      <xml>
-        <category name="Events" colour="#FFBF00">
-          <block type="event_whenflagclicked"></block>
-        </category>
-        <category name="Sprites" colour="#FF6699">
-          <block type="sprite_move"></block>
-          <block type="sprite_say"></block>
-        </category>
-        <category name="Looks" colour="#9966FF">
-          <block type="sprite_setvisible"></block>
-        </category>
-        <category name="Text" colour="#5CA6A6">
-          <block type="text"></block>
-        </category>
-      </xml>
-    `;
-    workspace = Blockly.inject('blocklyDiv', {
-      toolbox: toolbox,
-      trashcan: true,
-      zoom: { controls: true, wheel: true }
-    });
-
-    Blockly.defineBlocksWithJsonArray([
-      { type:"event_whenflagclicked", message0:"when flag clicked", nextStatement:null, colour:60 },
-      { type:"sprite_move", message0:"move %1 steps", args0:[{type:"input_value",name:"STEPS",check:"Number"}], previousStatement:null, nextStatement:null, colour:290 },
-      { type:"sprite_say", message0:"say %1", args0:[{type:"input_value",name:"TEXT"}], previousStatement:null, nextStatement:null, colour:160 },
-      { type:"sprite_setvisible", message0:"set visible %1", args0:[{type:"field_checkbox",name:"VISIBLE",checked:true}], previousStatement:null, nextStatement:null, colour:230 }
-    ]);
-
-    Blockly.JavaScript['sprite_move'] = block => {
-      const steps = Blockly.JavaScript.valueToCode(block,'STEPS',Blockly.JavaScript.ORDER_ATOMIC)||10;
-      return `moveSprite(${steps});\n`;
-    };
-    Blockly.JavaScript['sprite_say'] = block => {
-      const msg = Blockly.JavaScript.valueToCode(block,'TEXT',Blockly.JavaScript.ORDER_ATOMIC)||'""';
-      return `spriteSay(${msg});\n`;
-    };
-    Blockly.JavaScript['sprite_setvisible'] = block => {
-      const visible = block.getFieldValue('VISIBLE')==='TRUE';
-      return `setVisible(${visible});\n`;
-    };
-  }
-
-  // Mode switch
-  window.startMode = mode => {
+  function startMode(mode) {
     currentMode = mode;
-    document.getElementById('age-picker').style.display = 'none';
-    document.getElementById('main-editor').style.display = 'block';
+    document.getElementById("age-picker").style.display = "none";
+    document.getElementById("main-editor").style.display = "block";
     initBlockly();
-    ctx = document.getElementById('stage').getContext('2d');
-    setupDragging();
+    initStarterSprite();
+  }
 
-    // ✅ Starter sprite: Scratch profile of jergan-studio
+  // 🧩 Starter sprite (Scratch profile)
+  function initStarterSprite() {
     const starter = new Image();
     starter.src = "https://uploads.scratch.mit.edu/users/avatars/jergan-studio.png";
     starter.onload = () => {
-      const sprite = { x: 200, y: 150, visible: true, image: starter, name: "Jergan" };
+      const sprite = { name: "Jergan", x: 200, y: 150, dir: 90, visible: true, image: starter };
       sprites.push(sprite);
       selectedSprite = sprite;
-      updateSpriteSelect();
-      drawAllSprites();
-    };
-
-    if (mode === 'teen') document.getElementById('script-editor').style.display = 'block';
-  };
-
-  // Sprite logic
-  function drawAllSprites() {
-    ctx.clearRect(0,0,400,300);
-    for (let s of sprites) {
-      if (!s.visible) continue;
-      if (s.image) ctx.drawImage(s.image, s.x-25, s.y-25, 50, 50);
-      else {
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, 20, 0, Math.PI*2);
-        ctx.fillStyle = "#ff9900";
-        ctx.fill();
-      }
-      if (s.sayText) {
-        ctx.font = "14px Arial";
-        ctx.fillStyle = "#000";
-        ctx.fillText(s.sayText, s.x - 20, s.y - 35);
-      }
-    }
-  }
-
-  function updateSpriteSelect() {
-    const select = document.getElementById('spriteSelect');
-    select.innerHTML = '';
-    sprites.forEach((s,i)=>{
-      const opt=document.createElement('option');
-      opt.value=i; opt.textContent=s.name;
-      select.appendChild(opt);
-    });
-    if (selectedSprite) select.value = sprites.indexOf(selectedSprite);
-  }
-
-  window.addSprite = function() {
-    const sprite = {x:200, y:150, visible:true, name:'Sprite'+(sprites.length+1)};
-    sprites.push(sprite);
-    selectedSprite = sprite;
-    updateSpriteSelect();
-    drawAllSprites();
-  };
-
-  window.deleteSprite = function() {
-    if (!selectedSprite) return;
-    sprites = sprites.filter(s => s !== selectedSprite);
-    selectedSprite = sprites[0] || null;
-    updateSpriteSelect();
-    drawAllSprites();
-  };
-
-  window.selectSprite = function() {
-    const index = document.getElementById('spriteSelect').value;
-    selectedSprite = sprites[index];
-  };
-
-  // Sprite dragging
-  function setupDragging() {
-    const canvas = document.getElementById('stage');
-    canvas.addEventListener('mousedown', e => {
-      const mx = e.offsetX, my = e.offsetY;
-      for (let s of [...sprites].reverse()) {
-        if (Math.abs(mx - s.x) < 25 && Math.abs(my - s.y) < 25) {
-          dragSprite = s;
-          offsetX = mx - s.x;
-          offsetY = my - s.y;
-          selectedSprite = s;
-          updateSpriteSelect();
-          break;
-        }
-      }
-    });
-    canvas.addEventListener('mousemove', e => {
-      if (dragSprite) {
-        dragSprite.x = e.offsetX - offsetX;
-        dragSprite.y = e.offsetY - offsetY;
-        drawAllSprites();
-      }
-    });
-    canvas.addEventListener('mouseup', () => dragSprite = null);
-  }
-
-  // Blockly runtime
-  window.generateCode = function() {
-    const code = Blockly.JavaScript.workspaceToCode(workspace);
-    if (currentMode === 'teen')
-      document.getElementById('script-editor').textContent = code;
-    console.log(code);
-  };
-
-  window.runCode = function() {
-    running = true;
-    const code = Blockly.JavaScript.workspaceToCode(workspace);
-    try { eval(code); } catch(e) { alert("Error: "+e.message); }
-  };
-
-  window.stopCode = function() { running = false; };
-
-  // Sprite actions
-  window.moveSprite = function(steps) {
-    if (selectedSprite) {
-      selectedSprite.x += steps;
-      drawAllSprites();
-    }
-  };
-  window.spriteSay = function(text) {
-    if (selectedSprite) {
-      selectedSprite.sayText = text.replace(/['"]/g,'');
-      drawAllSprites();
-      setTimeout(()=>{ selectedSprite.sayText=null; drawAllSprites(); },2000);
-    }
-  };
-  window.setVisible = function(visible) {
-    if (selectedSprite) { selectedSprite.visible = visible; drawAllSprites(); }
-  };
-});
-</script>
-</body>
-</html>
+      if (!projectId) {
+        projectId = Math.random().toString(36).substring(2, 8);
+        projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`;
