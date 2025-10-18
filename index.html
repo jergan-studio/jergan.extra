@@ -2,23 +2,28 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Jergan.extra (cloud-save ready)</title>
+  <title>Jergan.extra — final (events + paint editor + cloud-ready)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    html,body{height:100%;margin:0;font-family:sans-serif;background:#f3f4f6}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:#f3f4f6}
     #toolbar{display:flex;gap:8px;padding:10px;background:#fff;border-bottom:1px solid #e5e7eb;align-items:center}
     button{padding:8px 12px;border-radius:8px;border:1px solid #ccc;background:#fff;cursor:pointer}
     #container{display:flex;height:calc(100% - 56px)}
     #blocklyDiv{width:60%;height:100%}
     #right{width:40%;padding:12px;box-sizing:border-box;background:#fff;display:flex;flex-direction:column;gap:8px}
-    #stageWrap{flex:1;border:1px solid #ddd;border-radius:8px;overflow:hidden;background:#cfe9ff;position:relative}
+    #stageWrap{flex:1;border:1px solid #ddd;border-radius:8px;overflow:hidden;background:#dbeafe;position:relative}
     #stage{display:block;background:transparent}
+    #sprite-controls{display:flex;gap:8px;align-items:center}
     select,input[type=file]{padding:6px}
-    #draw-modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center}
-    #draw-area{background:#fff;padding:12px;border-radius:8px;text-align:center}
-    pre#script{height:140px;overflow:auto;background:#f8fafc;padding:8px;border-radius:6px;border:1px solid #e6eef7}
+    #draw-controls{display:flex;gap:8px;align-items:center}
+    #script{height:140px;overflow:auto;background:#f8fafc;padding:8px;border-radius:6px;border:1px solid #e6eef7}
     .muted{color:#6b7280;font-size:13px}
+    #paint-ui{display:none;gap:8px;align-items:center;margin-top:6px}
+    .small{padding:6px 8px;font-size:13px}
+    .flag { background:#10b981; color:white; border:none }
   </style>
+
+  <!-- Blockly -->
   <script src="https://unpkg.com/blockly/blockly.min.js"></script>
 </head>
 <body>
@@ -44,118 +49,125 @@
   <div id="blocklyDiv"></div>
 
   <div id="right">
-    <div style="display:flex;gap:8px;align-items:center">
-      <button id="addSprite">Add Sprite</button>
-      <button id="delSprite">Delete Sprite</button>
-      <button id="openDraw">Draw Sprite</button>
-      <select id="spriteSelect"></select>
+    <div id="sprite-controls">
+      <button id="addSprite" class="small">Add Sprite</button>
+      <button id="delSprite" class="small">Delete Sprite</button>
+      <button id="drawSprite" class="small">Quick Draw</button>
+      <button id="togglePaint" class="small">Edit Sprite</button>
+      <select id="spriteSelect" class="small"></select>
+    </div>
+
+    <div id="paint-ui">
+      <label>Color <input type="color" id="paintColor" value="#000000"></label>
+      <label>Brush <input id="brushSize" type="range" min="1" max="20" value="4"></label>
+      <button id="clearPaint" class="small">Clear</button>
+      <button id="finishPaint" class="small">Finish</button>
     </div>
 
     <div id="stageWrap">
       <canvas id="stage" width="640" height="480"></canvas>
     </div>
 
-    <div style="display:flex;gap:8px">
-      <button id="gen">Generate Code</button>
-      <button id="greenFlag">▶ Green Flag</button>
-      <button id="run">Run</button>
-      <button id="stop">Stop</button>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button id="gen" class="small">Generate Code</button>
+      <button id="greenFlag" class="flag small">▶ Green Flag</button>
+      <button id="run" class="small">Run</button>
+      <button id="stop" class="small">Stop</button>
+      <div style="margin-left:auto" class="muted">Events: when flag clicked / when sprite clicked / when key pressed</div>
     </div>
 
     <pre id="script" style="display:none"></pre>
-    <div class="muted">Tip: Use the toolbox to add event / motion / looks blocks. Use the green flag to run event handlers.</div>
+    <div class="muted">Tip: select a sprite in the dropdown to edit its scripts (blocks generate code for the currently selected sprite).</div>
   </div>
 </div>
 
-<!-- draw modal -->
-<div id="draw-modal">
-  <div id="draw-area">
-    <h3>Draw Sprite</h3>
-    <input type="color" id="colorPicker" value="#000000"><br><br>
-    <canvas id="drawCanvas" width="200" height="200" style="border:1px solid #ccc;cursor:crosshair"></canvas><br><br>
-    <button id="saveDraw">Save</button>
-    <button id="cancelDraw">Cancel</button>
-  </div>
-</div>
+<!-- draw modal fallback (not used for paint editor) -->
+<input id="dummy" style="display:none">
 
 <script>
-/* ================= CONFIG =================
-   If you have a cloud API, set CLOUD_API_BASE to its origin,
-   e.g. "https://api.yourdomain.com" - the code expects:
-     POST  /projects/:id   <- save (body JSON)
-     GET   /projects/:id   <- load (returns JSON)
-   Example small server code provided after this file.
-*/
-const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise left blank
-/* ========================================= */
+/* ============== CONFIG ==============
+If you have an API for cloud save set this to the origin,
+e.g. "https://api.example.com"
+Expect endpoints:
+POST /projects/:id  (save JSON body)
+GET  /projects/:id  (return JSON)
+====================================== */
+const CLOUD_API_BASE = ""; // set to server origin or leave blank to only use localStorage
 
-(function(){
-  // State
-  let workspace, currentMode = 'young';
+window.addEventListener('DOMContentLoaded', () => {
+  // state
+  let workspace = null;
+  let currentMode = 'young';
   const canvas = document.getElementById('stage');
   const ctx = canvas.getContext('2d');
-  let sprites = []; // each: {name,x,y,dir,visible,imageDataURL?}
+  let sprites = []; // {id,name,x,y,dir,visible,imageDataURL?}
   let selectedIndex = null;
-  let dragIndex = null, dragOffsetX=0, dragOffsetY=0;
-  let flagHandlers = [];
-  let runInterval = null;
+  let dragIndex = null;
   let projectId = null;
   let projectUrl = null;
+  let flagHandlers = [];
+  let keyHandlers = []; // {key,fn, spriteId|null}
+  let runTimer = null;
+  let paintMode = false;
+  let paintCanvas = document.createElement('canvas');
+  paintCanvas.width = 100; paintCanvas.height = 100;
+  let paintCtx = paintCanvas.getContext('2d');
 
   // DOM
   const btnYoung = document.getElementById('btn-young');
   const btnTeen = document.getElementById('btn-teen');
   const addBtn = document.getElementById('addSprite');
   const delBtn = document.getElementById('delSprite');
-  const openDraw = document.getElementById('openDraw');
+  const quickDrawBtn = document.getElementById('drawSprite');
+  const togglePaintBtn = document.getElementById('togglePaint');
   const spriteSelect = document.getElementById('spriteSelect');
   const genBtn = document.getElementById('gen');
   const runBtn = document.getElementById('run');
   const stopBtn = document.getElementById('stop');
-  const greenFlag = document.getElementById('greenFlag');
+  const greenFlagBtn = document.getElementById('greenFlag');
   const scriptPre = document.getElementById('script');
   const projectUrlEl = document.getElementById('projectUrl');
 
-  const btnSaveCloud = document.getElementById('btn-save-cloud');
-  const btnLoadCloud = document.getElementById('btn-load-cloud');
-  const btnExport = document.getElementById('btn-export');
-  const btnImport = document.getElementById('btn-import');
+  const saveCloudBtn = document.getElementById('btn-save-cloud');
+  const loadCloudBtn = document.getElementById('btn-load-cloud');
+  const exportBtn = document.getElementById('btn-export');
+  const importBtn = document.getElementById('btn-import');
   const importFile = document.getElementById('importFile');
 
-  // Drawing modal
-  const drawModal = document.getElementById('draw-modal');
-  const drawCanvas = document.getElementById('drawCanvas');
-  const drawCtx = drawCanvas.getContext('2d');
-  document.getElementById('saveDraw').addEventListener('click', saveDrawing);
-  document.getElementById('cancelDraw').addEventListener('click', ()=> drawModal.style.display='none');
+  const paintUI = document.getElementById('paint-ui');
+  const paintColor = document.getElementById('paintColor');
+  const brushSize = document.getElementById('brushSize');
+  const clearPaint = document.getElementById('clearPaint');
+  const finishPaint = document.getElementById('finishPaint');
 
-  // Utils
-  function randId(len=6){ return Math.random().toString(36).slice(2,2+len); }
+  // utils
+  const randId = (len=6) => Math.random().toString(36).slice(2, 2+len);
   function updateProjectUrlDisplay(){ projectUrlEl.textContent = projectUrl || '—'; }
 
-  // MODE buttons
+  // Mode buttons
   btnYoung.addEventListener('click', ()=> startMode('young'));
   btnTeen.addEventListener('click', ()=> startMode('teen'));
 
   function startMode(mode){
     currentMode = mode;
-    document.getElementById('mode-picker').style.display='none';
-    document.getElementById('container').style.display='flex';
+    document.getElementById('mode-picker').style.display = 'none';
+    document.getElementById('container').style.display = 'flex';
     initBlockly();
-    // add starter sprite (scratch avatar). if already loaded from saved project do not duplicate
-    if(!projectId) {
+    if(!projectId){
       projectId = randId(6);
       projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`;
       alert("Project created: " + projectUrl);
       updateProjectUrlDisplay();
-      // try to load starter avatar
-      const avatar = "https://uploads.scratch.mit.edu/users/avatars/jergan-studio.png";
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = avatar;
-      img.onload = () => {
-        sprites.push({name:"Jergan", x:320, y:240, dir:90, visible:true, imageDataURL: imageToDataURL(img)});
-        selectedIndex = sprites.length-1;
+      // load starter avatar asynchronously (cross-origin)
+      const avatarURL = "https://uploads.scratch.mit.edu/users/avatars/jergan-studio.png";
+      const img = new Image(); img.crossOrigin = "anonymous"; img.src = avatarURL;
+      img.onload = ()=>{
+        // convert to dataURL to save in project JSON
+        const tmp = document.createElement('canvas'); tmp.width=img.width; tmp.height=img.height;
+        tmp.getContext('2d').drawImage(img,0,0);
+        const dataURL = tmp.toDataURL();
+        sprites.push({ id: randId(6), name: "Jergan", x:320, y:240, dir:90, visible:true, imageDataURL: dataURL });
+        selectedIndex = sprites.length - 1;
         refreshSpriteSelect();
         drawAll();
       };
@@ -164,13 +176,15 @@ const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise l
     if(mode === 'teen') scriptPre.style.display='block';
   }
 
-  // Blockly init
+  // Blockly setup
   function initBlockly(){
     if(workspace) return;
     const toolbox = `
       <xml>
         <category name="Events" colour="#FFAB19">
           <block type="event_whenflagclicked"></block>
+          <block type="event_whenspriteclicked"></block>
+          <block type="event_whenkey"></block>
         </category>
         <category name="Motion" colour="#4C97FF">
           <block type="move_steps"></block>
@@ -193,9 +207,11 @@ const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise l
       </xml>
     `;
     workspace = Blockly.inject('blocklyDiv',{toolbox,trashcan:true,zoom:{controls:true,wheel:true}});
-    // define blocks
+
     Blockly.defineBlocksWithJsonArray([
       {"type":"event_whenflagclicked","message0":"when flag clicked","args0":[{"type":"input_statement","name":"DO"}],"colour":60},
+      {"type":"event_whenspriteclicked","message0":"when this sprite clicked","args0":[{"type":"input_statement","name":"DO"}],"colour":60},
+      {"type":"event_whenkey","message0":"when key %1 pressed","args0":[{"type":"field_input","name":"KEY","text":"space"}],"colour":60},
       {"type":"move_steps","message0":"move %1 steps","args0":[{"type":"input_value","name":"STEPS","check":"Number"}],"previousStatement":null,"nextStatement":null,"colour":210},
       {"type":"turn_right","message0":"turn right %1 degrees","args0":[{"type":"input_value","name":"DEG","check":"Number"}],"previousStatement":null,"nextStatement":null,"colour":210},
       {"type":"point_direction","message0":"point in direction %1","args0":[{"type":"input_value","name":"DIR","check":"Number"}],"previousStatement":null,"nextStatement":null,"colour":210},
@@ -203,12 +219,29 @@ const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise l
       {"type":"set_visible","message0":"set visible %1","args0":[{"type":"field_checkbox","name":"VIS","checked":true}],"previousStatement":null,"nextStatement":null,"colour":270}
     ]);
 
-    // JavaScript generators
+    // Generators
     Blockly.JavaScript['event_whenflagclicked'] = function(block){
       const statements = Blockly.JavaScript.statementToCode(block,'DO');
       const fnName = 'flagHandler_' + block.id.replace(/[^a-z0-9]/ig,'_');
       return `function ${fnName}(){\n${statements}\n}\nregisterFlagHandler(${fnName});\n`;
     };
+
+    // when this sprite clicked -> register for currently selected sprite id at generation time
+    Blockly.JavaScript['event_whenspriteclicked'] = function(block){
+      const statements = Blockly.JavaScript.statementToCode(block,'DO');
+      const fnName = 'spriteClickHandler_' + block.id.replace(/[^a-z0-9]/ig,'_');
+      const spriteId = getCurrentSelectedSpriteIdForGenerator();
+      return `function ${fnName}(){\n${statements}\n}\nregisterSpriteClickHandler(${JSON.stringify(spriteId)}, ${fnName});\n`;
+    };
+
+    Blockly.JavaScript['event_whenkey'] = function(block){
+      const key = block.getFieldValue('KEY') || '';
+      const statements = Blockly.JavaScript.statementToCode(block,'DO');
+      const fnName = 'keyHandler_' + block.id.replace(/[^a-z0-9]/ig,'_');
+      // if key === 'any' or empty treat as any
+      return `function ${fnName}(){\n${statements}\n}\nregisterKeyHandler(${JSON.stringify(key)}, ${fnName});\n`;
+    };
+
     Blockly.JavaScript['move_steps'] = b=>{
       const steps = Blockly.JavaScript.valueToCode(b,'STEPS',Blockly.JavaScript.ORDER_ATOMIC) || 10;
       return `moveSprite(${steps});\n`;
@@ -231,17 +264,24 @@ const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise l
     };
   }
 
-  // register flag handlers
-  function registerFlagHandler(fn){ flagHandlers.push(fn); }
+  // helper to get id of selected sprite at code generation time
+  function getCurrentSelectedSpriteIdForGenerator(){
+    if(selectedIndex==null) return null;
+    return sprites[selectedIndex] ? sprites[selectedIndex].id : null;
+  }
 
-  // Core sprite operations used by generated code
-  window.registerFlagHandler = registerFlagHandler;
+  // register functions used by generated code
+  window.registerFlagHandler = function(fn){ flagHandlers.push(fn); };
+  window.registerSpriteClickHandler = function(spriteId, fn){ keyHandlers.push({type:'spriteClick', spriteId, fn}); };
+  window.registerKeyHandler = function(key, fn){ keyHandlers.push({type:'key', key: (key||'').toLowerCase(), fn}); };
+
+  // Basic sprite API used by generated code
   window.moveSprite = function(steps){
     if(selectedIndex==null) return;
     const s = sprites[selectedIndex];
-    const angleRad = (s.dir - 90) * Math.PI/180;
-    s.x += steps * Math.cos(angleRad);
-    s.y += steps * Math.sin(angleRad);
+    const rad = (s.dir - 90) * Math.PI / 180;
+    s.x += steps * Math.cos(rad);
+    s.y += steps * Math.sin(rad);
     drawAll();
   };
   window.turnSprite = function(deg){
@@ -256,9 +296,10 @@ const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise l
   };
   window.say = function(txt){
     if(selectedIndex==null) return;
-    sprites[selectedIndex].say = String(txt).replace(/^["']|["']$/g,'');
+    const s = sprites[selectedIndex];
+    s.say = String(txt).replace(/^['"]|['"]$/g,'');
     drawAll();
-    setTimeout(()=>{ if(sprites[selectedIndex]) { delete sprites[selectedIndex].say; drawAll(); } },2000);
+    setTimeout(()=>{ if(s) { delete s.say; drawAll(); } },2000);
   };
   window.setVisible = function(v){
     if(selectedIndex==null) return;
@@ -266,23 +307,20 @@ const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise l
     drawAll();
   };
 
-  // draw/refresh
+  // draw all sprites to stage
   function drawAll(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
-    for(let i=0;i<sprites.length;i++){
-      const s = sprites[i];
+    // draw in order
+    for(let s of sprites){
       if(!s.visible) continue;
       ctx.save();
-      ctx.translate(s.x,s.y);
-      ctx.rotate((s.dir-90) * Math.PI/180);
+      ctx.translate(s.x, s.y);
+      ctx.rotate((s.dir - 90) * Math.PI / 180);
       if(s.imageDataURL){
-        const img = new Image();
-        img.src = s.imageDataURL;
-        ctx.drawImage(img,-25,-25,50,50);
-      } else if(s.image){
-        // support image object if existed from earlier code
-        ctx.drawImage(s.image,-25,-25,50,50);
+        const img = new Image(); img.src = s.imageDataURL;
+        ctx.drawImage(img, -25, -25, 50, 50);
       } else {
+        // placeholder circle
         ctx.fillStyle = "#ff8800";
         ctx.beginPath(); ctx.arc(0,0,20,0,Math.PI*2); ctx.fill();
       }
@@ -291,26 +329,28 @@ const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise l
       if(s.say){
         ctx.font = "14px sans-serif";
         ctx.fillStyle = "#000";
-        ctx.fillText(s.say, s.x-20, s.y-35);
+        ctx.fillText(s.say, s.x - 20, s.y - 35);
       }
     }
   }
 
-  // sprite list UI
+  // sprite UI
   function refreshSpriteSelect(){
-    spriteSelect.innerHTML='';
+    spriteSelect.innerHTML = '';
     sprites.forEach((s,i)=>{
-      const o = document.createElement('option'); o.value = i; o.textContent = s.name || ('Sprite '+(i+1));
-      spriteSelect.appendChild(o);
+      const opt = document.createElement('option'); opt.value = i; opt.textContent = s.name || ('Sprite '+(i+1));
+      spriteSelect.appendChild(opt);
     });
     if(selectedIndex==null && sprites.length) selectedIndex = 0;
-    spriteSelect.value = selectedIndex;
+    if(selectedIndex!=null) spriteSelect.value = selectedIndex;
     updateProjectUrlDisplay();
   }
-  spriteSelect.addEventListener('change', ()=> { selectedIndex = Number(spriteSelect.value); });
+  spriteSelect.addEventListener('change', ()=> selectedIndex = Number(spriteSelect.value));
 
-  // add/delete/draw
-  addBtn.addEventListener('click', addSprite);
+  // add/delete/quick draw
+  addBtn.addEventListener('click', ()=> {
+    addSprite();
+  });
   delBtn.addEventListener('click', ()=> {
     if(selectedIndex==null) return;
     sprites.splice(selectedIndex,1);
@@ -319,233 +359,362 @@ const CLOUD_API_BASE = ""; // <-- set to server origin if available, otherwise l
   });
 
   function addSprite(){
-    const idx = sprites.length + 1;
-    sprites.push({name:'Sprite '+idx, x:320, y:240, dir:90, visible:true});
-    selectedIndex = sprites.length-1;
-    refreshSpriteSelect();
-    drawAll();
-    // create project URL the first time a sprite is added (if not set)
-    if(!projectId){ projectId = randId(6); projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`; updateProjectUrlDisplay(); alert('Project created at: ' + projectUrl); }
-  }
-
-  // drawing tool
-  openDraw.addEventListener('click', ()=>{
-    drawModal.style.display = 'flex';
-    drawCtx.clearRect(0,0,drawCanvas.width,drawCanvas.height);
-    // white bg
-    drawCtx.fillStyle = '#fff'; drawCtx.fillRect(0,0,drawCanvas.width,drawCanvas.height);
-  });
-
-  let drawing=false;
-  drawCanvas.addEventListener('mousedown', e=>{ drawing=true; drawCtx.beginPath(); drawCtx.moveTo(e.offsetX,e.offsetY); });
-  drawCanvas.addEventListener('mousemove', e=>{ if(!drawing) return; drawCtx.strokeStyle = document.getElementById('colorPicker').value; drawCtx.lineWidth=4; drawCtx.lineTo(e.offsetX,e.offsetY); drawCtx.stroke();});
-  drawCanvas.addEventListener('mouseup', ()=> drawing=false);
-
-  function imageToDataURL(img){
-    const tmp = document.createElement('canvas'); tmp.width=img.width; tmp.height=img.height;
-    const tctx = tmp.getContext('2d'); tctx.drawImage(img,0,0);
-    return tmp.toDataURL();
-  }
-
-  function saveDrawing(){
-    const data = drawCanvas.toDataURL('image/png');
-    const name = 'Sprite ' + (sprites.length+1);
-    sprites.push({name, x:320, y:240, dir:90, visible:true, imageDataURL:data});
+    const id = randId(6);
+    sprites.push({ id, name: 'Sprite ' + (sprites.length+1), x:320, y:240, dir:90, visible:true });
     selectedIndex = sprites.length-1;
     refreshSpriteSelect(); drawAll();
-    drawModal.style.display='none';
-    // ensure project id exists
-    if(!projectId){ projectId = randId(6); projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`; updateProjectUrlDisplay(); alert('Project created at: ' + projectUrl); }
+    if(!projectId){ projectId = randId(6); projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`; updateProjectUrlDisplay(); alert('Project created: ' + projectUrl); }
   }
 
-  // dragging
-  canvas.addEventListener('mousedown', e=>{
-    const r = canvas.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    for(let i=sprites.length-1;i>=0;i--){
-      const s = sprites[i];
+  quickDrawBtn.addEventListener('click', ()=>{
+    // quick draw: create a circular colored image
+    const tmp = document.createElement('canvas'); tmp.width=50; tmp.height=50;
+    const tctx = tmp.getContext('2d');
+    tctx.fillStyle = '#'+Math.floor(Math.random()*16777215).toString(16);
+    tctx.beginPath(); tctx.arc(25,25,25,0,Math.PI*2); tctx.fill();
+    const data = tmp.toDataURL();
+    const id = randId(6);
+    sprites.push({ id, name:'Drawn '+(sprites.length+1), x:320, y:240, dir:90, visible:true, imageDataURL:data });
+    selectedIndex = sprites.length-1;
+    refreshSpriteSelect(); drawAll();
+    if(!projectId){ projectId = randId(6); projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`; updateProjectUrlDisplay(); alert('Project created: ' + projectUrl); }
+  });
+
+  // PAINT editor (option 1): paint directly onto selected sprite image
+  togglePaintBtn.addEventListener('click', ()=>{
+    if(!paintMode){
+      // enter paint mode for selected sprite; ensure it has an imageDataURL
+      if(selectedIndex==null){ alert('Select or add a sprite first'); return; }
+      const s = sprites[selectedIndex];
+      // set paintCanvas to current sprite image (or blank)
+      if(s.imageDataURL){
+        const img = new Image(); img.src = s.imageDataURL;
+        img.onload = ()=> {
+          paintCanvas.width = img.width || 100; paintCanvas.height = img.height || 100;
+          paintCtx.drawImage(img,0,0,paintCanvas.width,paintCanvas.height);
+          activatePaintUI();
+        };
+        img.onerror = ()=> { paintCanvas.width=100; paintCanvas.height=100; paintCtx.fillStyle='#fff'; paintCtx.fillRect(0,0,100,100); activatePaintUI(); };
+      } else {
+        paintCanvas.width = 100; paintCanvas.height = 100; paintCtx.fillStyle='#fff'; paintCtx.fillRect(0,0,100,100); activatePaintUI();
+      }
+    } else {
+      // exit paint mode and apply drawing to sprite image
+      applyPaintToSprite();
+      deactivatePaintUI();
+    }
+  });
+
+  function activatePaintUI(){
+    paintMode = true;
+    paintUI.style.display = 'flex';
+    togglePaintBtn.textContent = 'Finish Edit';
+    // show overlay of paintCanvas over sprite on stage (we won't overlay visually; painting happens in paintCtx)
+  }
+
+  function deactivatePaintUI(){
+    paintMode = false;
+    paintUI.style.display = 'none';
+    togglePaintBtn.textContent = 'Edit Sprite';
+  }
+
+  // paint interactions: draw on paintCanvas and also reflect in sprite image preview while painting
+  let isPainting=false;
+  canvas.addEventListener('mousedown', (e)=>{
+    if(paintMode && selectedIndex!=null){
+      // map mouse to sprite local coords; paint into paintCtx when clicking on selected sprite area
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const s = sprites[selectedIndex];
+      // check if click within sprite bounds (50x50 centered)
       if(Math.abs(mx - s.x) < 25 && Math.abs(my - s.y) < 25){
-        dragIndex = i; selectedIndex = i; refreshSpriteSelect(); break;
+        // start painting
+        isPainting = true;
+        paintAtSprite(mx - (s.x - 25), my - (s.y - 25)); // local x,y into 0..50
+      } else {
+        // not painting: maybe start dragging instead — treat as normal drag if not paintMode (but here paintMode so do nothing)
+      }
+    } else {
+      // dragging behavior when not paint mode
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      for(let i=sprites.length-1;i>=0;i--){
+        const s = sprites[i];
+        if(Math.abs(mx - s.x) < 25 && Math.abs(my - s.y) < 25){
+          dragIndex = i;
+          // keep selection in sync
+          selectedIndex = i; refreshSpriteSelect();
+          break;
+        }
       }
     }
   });
-  canvas.addEventListener('mousemove', e=>{
-    if(dragIndex==null) return;
-    const r = canvas.getBoundingClientRect();
-    sprites[dragIndex].x = e.clientX - r.left;
-    sprites[dragIndex].y = e.clientY - r.top;
+
+  canvas.addEventListener('mousemove', (e)=>{
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    if(isPainting && selectedIndex!=null){
+      const s = sprites[selectedIndex];
+      paintAtSprite(mx - (s.x - 25), my - (s.y - 25));
+    } else if(dragIndex!=null){
+      const s = sprites[dragIndex];
+      s.x = mx; s.y = my;
+      drawAll();
+    }
+  });
+
+  window.addEventListener('mouseup', ()=>{
+    isPainting = false;
+    dragIndex = null;
+  });
+
+  function paintAtSprite(localX, localY){
+    // localX/Y is position relative to sprite top-left. Our paintCanvas may be 100x100 or similar.
+    // Map local coords (0..50) to paintCanvas dims:
+    const s = sprites[selectedIndex];
+    const scaleX = paintCanvas.width / 50;
+    const scaleY = paintCanvas.height / 50;
+    const px = Math.floor(localX * scaleX);
+    const py = Math.floor(localY * scaleY);
+    paintCtx.fillStyle = paintColor.value;
+    paintCtx.beginPath();
+    paintCtx.arc(px, py, Number(brushSize.value), 0, Math.PI*2);
+    paintCtx.fill();
+    // update sprite preview imageDataURL
+    s.imageDataURL = paintCanvas.toDataURL();
     drawAll();
-  });
-  window.addEventListener('mouseup', ()=> { dragIndex = null; });
+  }
 
-  // code generation + run
-  genBtn.addEventListener('click', ()=> {
+  clearPaint.addEventListener('click', ()=>{
+    paintCtx.fillStyle = '#ffffff'; paintCtx.fillRect(0,0,paintCanvas.width,paintCanvas.height);
+    if(selectedIndex!=null){ sprites[selectedIndex].imageDataURL = paintCanvas.toDataURL(); drawAll(); }
+  });
+
+  finishPaint.addEventListener('click', ()=>{
+    applyPaintToSprite();
+    deactivatePaintUI();
+  });
+
+  function applyPaintToSprite(){
+    if(selectedIndex==null) return;
+    sprites[selectedIndex].imageDataURL = paintCanvas.toDataURL();
+    drawAll();
+    paintMode = false;
+    paintUI.style.display = 'none';
+    togglePaintBtn.textContent = 'Edit Sprite';
+    if(!projectId){ projectId = randId(6); projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`; updateProjectUrlDisplay(); alert('Project created: ' + projectUrl); }
+  }
+
+  // quick helpers for painting: in case user wants to finish via toggle
+  // done above
+
+  // stage click detection for "when sprite clicked" event firing
+  canvas.addEventListener('click', (e)=>{
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    for(let i=sprites.length-1;i>=0;i--){
+      const s = sprites[i];
+      if(Math.abs(mx - s.x) < 25 && Math.abs(my - s.y) < 25){
+        // found clicked sprite i
+        // run handlers registered for this sprite click
+        for(const h of keyHandlers){
+          if(h.type === 'spriteClick' && h.spriteId === s.id){
+            try { h.fn(); } catch(err){ console.error(err); alert('Error in sprite click handler: ' + err.message); }
+          }
+        }
+        break;
+      }
+    }
+  });
+
+  // key press handler
+  window.addEventListener('keydown', (e)=>{
+    const k = e.key.toLowerCase();
+    for(const h of keyHandlers){
+      if(h.type === 'key'){
+        const want = (h.key||'').toLowerCase();
+        if(!want || want === '' || want === 'any' || want === 'all') { try{ h.fn(); }catch(e){console.error(e);} }
+        else if(want === 'space' && k === ' ' || want === 'space' && k === 'spacebar') { try{ h.fn(); }catch(e){console.error(e);} }
+        else if(want === k) { try{ h.fn(); }catch(e){console.error(e);} }
+      }
+    }
+  });
+
+  // code generation/run UI
+  genBtn.addEventListener('click', ()=>{
     const code = Blockly.JavaScript.workspaceToCode(workspace);
-    if(currentMode==='teen') scriptPre.style.display='block';
+    if(currentMode === 'teen') scriptPre.style.display = 'block';
     scriptPre.textContent = code;
-    alert('Code generated to panel (also shown if 13+).');
+    alert('Code generated (shown in panel if 13+).');
   });
 
-  // register/execute flag handlers
-  greenFlag.addEventListener('click', ()=> {
-    // clear previous handlers then evaluate code which registers handlers
+  greenFlagBtn.addEventListener('click', ()=>{
+    // clear previous handlers
     flagHandlers = [];
+    keyHandlers = [];
+    // generate code and eval — handlers register themselves via register* calls
     const code = Blockly.JavaScript.workspaceToCode(workspace);
     try {
       eval(code);
-      // run handlers sequentially (not blocking)
-      for(const fn of flagHandlers) {
-        try { fn(); } catch(e){ console.error('flag handler', e); alert('Error in handler: '+e.message); }
+      // run all global flag handlers
+      for(const fn of flagHandlers){
+        try { fn(); } catch(err) { console.error('flag handler', err); alert('Error in flag handler: ' + err.message); }
       }
-    } catch(e){ alert('Error evaluating code: '+e.message); }
+    } catch(err){ alert('Error evaluating code: ' + err.message); }
   });
 
   runBtn.addEventListener('click', ()=> {
-    try { const code = Blockly.JavaScript.workspaceToCode(workspace); eval(code); }
-    catch(e){ alert('Runtime error: '+e.message); }
+    const code = Blockly.JavaScript.workspaceToCode(workspace);
+    try { eval(code); } catch(err){ alert('Runtime error: ' + err.message); }
   });
-  stopBtn.addEventListener('click', ()=> { if(runInterval) clearInterval(runInterval); });
 
-  // SAVE / LOAD (cloud + fallback localStorage)
+  stopBtn.addEventListener('click', ()=> {
+    if(runTimer) clearTimeout(runTimer);
+  });
+
+  // save/load/export/import (cloud + fallback)
   function getProjectObject(){
-    // store sprite minimal serializable data + blocks xml
-    const spritesSerial = sprites.map(s => ({name:s.name,x:s.x,y:s.y,dir:s.dir,visible:!!s.visible,imageDataURL:s.imageDataURL||null}));
+    const serialSprites = sprites.map(s => ({
+      id: s.id, name: s.name, x: s.x, y: s.y, dir: s.dir, visible: !!s.visible, imageDataURL: s.imageDataURL || null
+    }));
     const xml = Blockly.Xml.workspaceToDom(workspace);
     const xmlText = Blockly.Xml.domToText(xml);
-    return { id: projectId, sprites: spritesSerial, blocks: xmlText };
+    return { id: projectId, sprites: serialSprites, blocks: xmlText, createdAt: Date.now() };
   }
 
   async function saveToCloud(){
     const obj = getProjectObject();
     if(!obj.id){ projectId = randId(6); obj.id = projectId; projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`; updateProjectUrlDisplay(); }
-    // try cloud if configured
+    // attempt cloud
     if(CLOUD_API_BASE){
       try {
         const res = await fetch(`${CLOUD_API_BASE}/projects/${obj.id}`, {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(obj)
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj)
         });
         if(!res.ok) throw new Error('Server returned '+res.status);
-        alert('Saved to cloud (project id: '+obj.id+')');
-        // also local fallback
+        alert('Saved to cloud (id: '+obj.id+')');
         localStorage.setItem('jergan_'+obj.id, JSON.stringify(obj));
+        localStorage.setItem('jergan_last', obj.id);
         return;
       } catch(err){
         console.warn('cloud save failed',err);
-        alert('Cloud save failed, saved locally instead.');
+        alert('Cloud save failed; saved locally instead.');
       }
     }
-    // local fallback
     localStorage.setItem('jergan_'+obj.id, JSON.stringify(obj));
-    alert('Saved locally (no cloud configured). Project id: '+obj.id);
+    localStorage.setItem('jergan_last', obj.id);
+    alert('Saved locally. Project id: '+obj.id);
   }
 
-  async function loadFromCloud(){
-    if(!projectId) { projectId = prompt('Enter project id to load (or paste):') || projectId; }
-    if(!projectId) return alert('No project id set.');
+  async function loadFromCloud(id){
+    if(!id) id = prompt('Enter project id to load:', projectId||'') || null;
+    if(!id) return;
     let loaded = null;
     if(CLOUD_API_BASE){
       try {
-        const res = await fetch(`${CLOUD_API_BASE}/projects/${projectId}`);
-        if(res.ok){
-          loaded = await res.json();
-        } else {
-          console.warn('cloud load failed',res.status);
-        }
-      } catch(e){
-        console.warn('cloud load error',e);
-      }
+        const res = await fetch(`${CLOUD_API_BASE}/projects/${id}`);
+        if(res.ok) loaded = await res.json();
+      } catch(e){ console.warn('cloud load error',e); }
     }
     if(!loaded){
-      const raw = localStorage.getItem('jergan_'+projectId);
+      const raw = localStorage.getItem('jergan_'+id);
       if(raw) loaded = JSON.parse(raw);
     }
-    if(!loaded) return alert('No project found with id '+projectId);
+    if(!loaded) return alert('No project found with id '+id);
     // restore
-    sprites = (loaded.sprites || []).map(s=>({ ...s }));
-    // restore blocks
-    try {
-      const dom = Blockly.Xml.textToDom(loaded.blocks);
-      Blockly.Xml.domToWorkspace(dom, workspace);
-    } catch(e){
-      console.warn('blocks restore failed',e);
-    }
-    selectedIndex = sprites.length ? 0 : null;
+    projectId = loaded.id || id;
     projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`;
-    updateProjectUrlDisplay();
-    refreshSpriteSelect(); drawAll(); alert('Project loaded.');
+    sprites = (loaded.sprites || []).map(s => ({ ...s }));
+    try {
+      const dom = Blockly.Xml.textToDom(loaded.blocks || '<xml></xml>');
+      Blockly.Xml.domToWorkspace(dom, workspace);
+    } catch(e){ console.warn('restore blocks failed', e); }
+    selectedIndex = sprites.length ? 0 : null;
+    refreshSpriteSelect(); drawAll(); updateProjectUrlDisplay();
+    alert('Project loaded.');
   }
 
-  // Save/Load UI hooks
-  btnSaveCloud.addEventListener('click', saveToCloud);
-  btnLoadCloud.addEventListener('click', ()=>{
-    const idInput = prompt('Enter project id to load (leave blank to use current project id):', projectId||'');
-    if(idInput) projectId = idInput;
-    loadFromCloud();
+  saveCloudBtn.addEventListener('click', saveToCloud);
+  loadCloudBtn.addEventListener('click', ()=> {
+    const id = prompt('Enter project id to load (leave blank to use current):', projectId||'');
+    loadFromCloud(id || projectId);
   });
 
-  // Import/export
-  btnExport.addEventListener('click', ()=>{
+  exportBtn.addEventListener('click', ()=>{
     const obj = getProjectObject();
-    const blob = new Blob([JSON.stringify(obj, null, 2)], {type:'application/json'});
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = (projectId||'jergan_project') + '.json';
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   });
 
-  btnImport.addEventListener('click', ()=> importFile.click());
-  importFile.addEventListener('change', e=>{
+  importBtn.addEventListener('click', ()=> importFile.click());
+  importFile.addEventListener('change', (e)=>{
     const f = e.target.files[0]; if(!f) return;
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = ev=>{
       try {
         const obj = JSON.parse(ev.target.result);
-        // restore
-        sprites = (obj.sprites || []).map(s=>({ ...s }));
-        const dom = Blockly.Xml.textToDom(obj.blocks || '<xml></xml>');
-        Blockly.Xml.domToWorkspace(dom, workspace);
         projectId = obj.id || projectId || randId(6);
         projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`;
+        sprites = (obj.sprites||[]).map(s => ({ ...s }));
+        try { const dom = Blockly.Xml.textToDom(obj.blocks||'<xml></xml>'); Blockly.Xml.domToWorkspace(dom, workspace); } catch(e){}
+        selectedIndex = sprites.length ? 0 : null;
         refreshSpriteSelect(); drawAll(); updateProjectUrlDisplay();
-        alert('Project imported.');
+        alert('Imported project.');
       } catch(err){ alert('Import failed: '+err.message); }
     };
     reader.readAsText(f);
   });
 
-  // helpers
-  function updateProjectUrlDisplay(){ document.getElementById('projectUrl').textContent = projectUrl||'—'; }
-
-  // try restore last autosave
-  (function tryRestore() {
-    // look for last saved id in localStorage key 'jergan_last'
-    const last = localStorage.getItem('jergan_last');
-    if(last){
-      try {
-        const obj = JSON.parse(localStorage.getItem('jergan_'+last));
-        if(obj){
-          // ask user
-          if(confirm('Restore last project "'+last+'" from local storage?')){
-            projectId = obj.id || last;
-            sprites = (obj.sprites || []).map(s=>({ ...s }));
-            try { const dom = Blockly.Xml.textToDom(obj.blocks||'<xml></xml>'); initBlockly(); Blockly.Xml.domToWorkspace(dom, workspace); } catch(e){}
-            updateProjectUrlDisplay(); refreshSpriteSelect(); drawAll();
-          }
-        }
-      } catch(e){}
-    }
-  })();
-
-  // autosave to local on changes
+  // autosave to localStorage every 6 seconds
   setInterval(()=>{
     if(!projectId) return;
     const obj = getProjectObject();
     localStorage.setItem('jergan_'+projectId, JSON.stringify(obj));
     localStorage.setItem('jergan_last', projectId);
-  }, 5000);
+  }, 6000);
 
-})();
+  // try to restore last project on load
+  (function tryRestoreLast(){
+    const last = localStorage.getItem('jergan_last');
+    if(!last) return;
+    const raw = localStorage.getItem('jergan_'+last);
+    if(!raw) return;
+    if(confirm('Restore last project from local storage (id: '+last+')?')){
+      try {
+        const obj = JSON.parse(raw);
+        projectId = obj.id || last;
+        projectUrl = `https://jergan-extra/${projectId}/.vercel.app/`;
+        sprites = (obj.sprites||[]).map(s=>({ ...s }));
+        initBlockly();
+        try { const dom = Blockly.Xml.textToDom(obj.blocks||'<xml></xml>'); Blockly.Xml.domToWorkspace(dom, workspace); } catch(e){}
+        selectedIndex = sprites.length ? 0 : null;
+        refreshSpriteSelect(); drawAll(); updateProjectUrlDisplay();
+      } catch(e){}
+    }
+  })();
+
+  // helper to redraw after selection change
+  function refreshSpriteSelect(){ spriteSelect.innerHTML=''; sprites.forEach((s,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=s.name || ('Sprite '+(i+1)); spriteSelect.appendChild(o); }); if(selectedIndex==null && sprites.length) selectedIndex = 0; if(selectedIndex!=null) spriteSelect.value = selectedIndex; updateProjectUrlDisplay(); }
+
+  // stage click for sprite-specific events handled earlier, but ensure draw when starting
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+  drawAll();
+
+  // ensure canvas resizes properly if window resized
+  window.addEventListener('resize', ()=> {
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    drawAll();
+  });
+
+  // For safety: expose helper functions to console (optional)
+  window._jergan = { sprites, drawAll };
+
+  // done
+});
 </script>
 </body>
 </html>
