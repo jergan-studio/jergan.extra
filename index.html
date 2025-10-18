@@ -2,260 +2,299 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Jergan.extra - Create & Code</title>
+  <title>Jergan.extra - Code with Blocks or Scripts</title>
   <style>
     html, body {
-      margin: 0; padding: 0; height: 100%;
-      font-family: sans-serif; background: #fafafa;
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: sans-serif;
+      background: #f7f7f7;
     }
-    #age-picker, #main-editor { display: none; height: 100%; }
+    #age-picker, #main-editor {
+      height: 100%;
+    }
     #age-picker {
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
     }
-    .btn { padding: 12px 20px; margin: 10px; font-size: 18px; cursor: pointer;
-      border-radius: 8px; border: none; background: #007bff; color: white; }
-    #main-container { display: flex; height: 100%; }
-    #blocklyDiv { height: 100%; width: 60%; background: #ffffff; border-right: 2px solid #ccc; }
+    .btn {
+      padding: 12px 20px;
+      margin: 10px;
+      font-size: 18px;
+      cursor: pointer;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+    .btn:hover {
+      background: #2563eb;
+    }
+    #main-container {
+      display: flex;
+      height: 100%;
+    }
+    #blocklyDiv {
+      height: 100%;
+      width: 60%;
+    }
     #right-panel {
-      width: 40%; display: flex; flex-direction: column; padding: 10px;
-      box-sizing: border-box; background: #f0f0f0;
+      width: 40%;
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+      box-sizing: border-box;
+      background: #fff;
+      border-left: 2px solid #ddd;
     }
-    #script-editor {
-      display: none; height: 150px; background: #f8f8f8; border: 1px solid #ccc;
-      font-family: monospace; padding: 10px; overflow: auto; border-radius: 6px;
-    }
-    #stage {
-      width: 100%; height: 300px; border: 2px solid #333;
-      background: #d0ebff; border-radius: 10px; margin-top: 10px;
+    #sprite-buttons {
+      margin-bottom: 10px;
     }
     #sprite-buttons button {
-      margin: 5px; padding: 8px 14px; border: none; border-radius: 6px;
-      background: #333; color: white; cursor: pointer;
+      margin-right: 5px;
+      padding: 8px 12px;
     }
-    #draw-canvas {
-      display: none; margin-top: 10px; border: 2px dashed #999;
-      background: #fff;
+    #stage {
+      flex: 1;
+      background: #e0e0e0;
+      border: 2px solid #ccc;
+      position: relative;
+      overflow: hidden;
+    }
+    canvas {
+      background: white;
+      border-radius: 10px;
+      border: 1px solid #999;
+    }
+    #script-editor {
+      display: none;
+      height: 150px;
+      background: #f0f0f0;
+      overflow: auto;
+      font-family: monospace;
+      padding: 10px;
     }
   </style>
   <script src="https://unpkg.com/blockly/blockly.min.js"></script>
-  <script src="https://unpkg.com/interpreter@latest/interpreter.js"></script>
 </head>
 <body>
 
-<!-- Age picker -->
+<!-- Age Picker -->
 <div id="age-picker">
   <h1>Welcome to Jergan.extra</h1>
   <p>Choose your mode:</p>
-  <button class="btn" onclick="startMode('young')">Under 13 (Blocks)</button>
-  <button class="btn" onclick="startMode('teen')">13+ (Blocks + Script)</button>
+  <button class="btn" onclick="startMode('young')">I'm under 13 (Blocks only)</button>
+  <button class="btn" onclick="startMode('teen')">I'm 13 or older (Blocks + Script)</button>
 </div>
 
-<!-- Main editor -->
-<div id="main-editor">
+<!-- Main Editor -->
+<div id="main-editor" style="display:none;">
   <div id="main-container">
     <div id="blocklyDiv"></div>
     <div id="right-panel">
-      <button onclick="generateCode()">Generate Code</button>
-      <button onclick="runCode()">Run</button>
-      <button onclick="stopCode()">Stop</button>
-      <pre id="script-editor"></pre>
-
       <div id="sprite-buttons">
-        <button onclick="addSprite()">➕ Add Sprite</button>
-        <button onclick="deleteSprite()">❌ Delete Sprite</button>
-        <button onclick="toggleDrawCanvas()">✏️ Draw Sprite</button>
+        <button onclick="addSprite()">Add Sprite</button>
+        <button onclick="deleteSprite()">Delete Sprite</button>
+        <button onclick="drawSprite()">Draw Sprite</button>
       </div>
-
-      <canvas id="stage" width="300" height="300"></canvas>
-      <canvas id="draw-canvas" width="200" height="200"></canvas>
+      <canvas id="stage" width="400" height="300"></canvas>
+      <button class="btn" onclick="generateCode()">Generate Code</button>
+      <button class="btn" onclick="runCode()">Run</button>
+      <button class="btn" onclick="stopCode()">Stop</button>
+      <pre id="script-editor"></pre>
     </div>
   </div>
 </div>
 
+<!-- SCRIPT -->
 <script>
-  let workspace, interpreter, currentMode = 'young', runTimer;
-  const stage = document.getElementById('stage');
-  const ctx = stage.getContext('2d');
-  const drawCanvas = document.getElementById('draw-canvas');
-  const drawCtx = drawCanvas.getContext('2d');
-  let drawing = false;
-
-  const sprites = {};
-  let spriteCount = 0;
+window.addEventListener("DOMContentLoaded", () => {
+  let workspace = null;
+  let currentMode = 'young';
+  let sprites = [];
   let selectedSprite = null;
-  let isDrawingSprite = false;
+  let ctx = null;
+  let running = false;
 
-  function startMode(mode) {
-    currentMode = mode;
-    document.getElementById('age-picker').style.display = 'none';
-    document.getElementById('main-editor').style.display = 'block';
-    initBlockly();
-    if (mode === 'teen') document.getElementById('script-editor').style.display = 'block';
-    addSprite(); // default sprite
-    drawStage();
-  }
-
+  // Initialize Blockly
   function initBlockly() {
     const toolbox = `
       <xml>
         <category name="Events" colour="#FFBF00">
-          <block type="event_when_flag_clicked"></block>
+          <block type="event_whenflagclicked"></block>
         </category>
-        <category name="Sprites" colour="#FF7F00">
+        <category name="Sprites" colour="#FF6699">
           <block type="sprite_move"></block>
-          <block type="sprite_turn"></block>
-          <block type="sprite_show"></block>
-          <block type="sprite_hide"></block>
+          <block type="sprite_say"></block>
         </category>
         <category name="Looks" colour="#9966FF">
-          <block type="looks_say"></block>
+          <block type="sprite_setvisible"></block>
+        </category>
+        <category name="Motion" colour="#4C97FF">
+          <block type="move_steps"></block>
         </category>
         <category name="Text" colour="#5CA6A6">
           <block type="text"></block>
-          <block type="text_print"></block>
-        </category>
-        <category name="Control" colour="#FFAB19">
-          <block type="controls_repeat_ext">
-            <value name="TIMES"><shadow type="math_number"><field name="NUM">5</field></shadow></value>
-          </block>
         </category>
       </xml>
     `;
 
-    workspace = Blockly.inject('blocklyDiv', { toolbox, trashcan: true });
+    workspace = Blockly.inject('blocklyDiv', {
+      toolbox: toolbox,
+      trashcan: true,
+      zoom: { controls: true, wheel: true }
+    });
 
+    // Custom Blocks
     Blockly.defineBlocksWithJsonArray([
-      { type: "event_when_flag_clicked", message0: "when flag clicked", nextStatement: null, colour: "#FFBF00" },
-      { type: "sprite_move", message0: "move %1 steps", args0: [{ type: "input_value", name: "STEPS" }], previousStatement: null, nextStatement: null, colour: "#FF7F00" },
-      { type: "sprite_turn", message0: "turn %1 degrees", args0: [{ type: "input_value", name: "DEGREES" }], previousStatement: null, nextStatement: null, colour: "#FF7F00" },
-      { type: "sprite_show", message0: "show sprite", previousStatement: null, nextStatement: null, colour: "#FF7F00" },
-      { type: "sprite_hide", message0: "hide sprite", previousStatement: null, nextStatement: null, colour: "#FF7F00" },
-      { type: "looks_say", message0: "say %1", args0: [{ type: "input_value", name: "TEXT" }], previousStatement: null, nextStatement: null, colour: "#9966FF" }
+      {
+        "type": "event_whenflagclicked",
+        "message0": "when flag clicked",
+        "nextStatement": null,
+        "colour": 60
+      },
+      {
+        "type": "sprite_move",
+        "message0": "move %1 steps",
+        "args0": [{"type": "input_value", "name": "STEPS", "check": "Number"}],
+        "previousStatement": null,
+        "nextStatement": null,
+        "colour": 290
+      },
+      {
+        "type": "sprite_say",
+        "message0": "say %1",
+        "args0": [{"type": "input_value", "name": "TEXT"}],
+        "previousStatement": null,
+        "nextStatement": null,
+        "colour": 160
+      },
+      {
+        "type": "sprite_setvisible",
+        "message0": "set visible %1",
+        "args0": [{"type": "field_checkbox", "name": "VISIBLE", "checked": true}],
+        "previousStatement": null,
+        "nextStatement": null,
+        "colour": 230
+      },
+      {
+        "type": "move_steps",
+        "message0": "move %1 steps",
+        "args0": [{"type": "input_value", "name": "STEPS", "check": "Number"}],
+        "previousStatement": null,
+        "nextStatement": null,
+        "colour": 210
+      }
     ]);
 
-    Blockly.JavaScript['sprite_move'] = b => `moveSprite('${selectedSprite}', ${Blockly.JavaScript.valueToCode(b, 'STEPS', Blockly.JavaScript.ORDER_NONE) || 10});\n`;
-    Blockly.JavaScript['sprite_turn'] = b => `turnSprite('${selectedSprite}', ${Blockly.JavaScript.valueToCode(b, 'DEGREES', Blockly.JavaScript.ORDER_NONE) || 15});\n`;
-    Blockly.JavaScript['sprite_show'] = () => `setSpriteVisible('${selectedSprite}', true);\n`;
-    Blockly.JavaScript['sprite_hide'] = () => `setSpriteVisible('${selectedSprite}', false);\n`;
-    Blockly.JavaScript['looks_say'] = b => `say('${selectedSprite}', ${Blockly.JavaScript.valueToCode(b, 'TEXT', Blockly.JavaScript.ORDER_NONE) || '"Hello!"'});\n`;
-    Blockly.JavaScript['event_when_flag_clicked'] = () => '';
-  }
-
-  function addSprite(image = null) {
-    const name = "sprite" + (++spriteCount);
-    sprites[name] = {
-      x: 150, y: 150, visible: true, angle: 0, img: image, color: getRandomColor()
+    Blockly.JavaScript['event_whenflagclicked'] = function() {
+      return '/* When flag clicked */\n';
     };
-    selectedSprite = name;
-    drawStage();
+    Blockly.JavaScript['sprite_move'] = function(block) {
+      const steps = Blockly.JavaScript.valueToCode(block, 'STEPS', Blockly.JavaScript.ORDER_ATOMIC) || 10;
+      return `moveSprite(${steps});\n`;
+    };
+    Blockly.JavaScript['sprite_say'] = function(block) {
+      const msg = Blockly.JavaScript.valueToCode(block, 'TEXT', Blockly.JavaScript.ORDER_ATOMIC) || '""';
+      return `spriteSay(${msg});\n`;
+    };
+    Blockly.JavaScript['sprite_setvisible'] = function(block) {
+      const visible = block.getFieldValue('VISIBLE') === 'TRUE';
+      return `setVisible(${visible});\n`;
+    };
+    Blockly.JavaScript['move_steps'] = function(block) {
+      const steps = Blockly.JavaScript.valueToCode(block, 'STEPS', Blockly.JavaScript.ORDER_ATOMIC) || 10;
+      return `moveSprite(${steps});\n`;
+    };
   }
 
-  function deleteSprite() {
-    if (selectedSprite && sprites[selectedSprite]) {
-      delete sprites[selectedSprite];
-      selectedSprite = Object.keys(sprites)[0] || null;
-      drawStage();
+  // Mode switch
+  window.startMode = function(mode) {
+    currentMode = mode;
+    document.getElementById('age-picker').style.display = 'none';
+    document.getElementById('main-editor').style.display = 'block';
+    initBlockly();
+    ctx = document.getElementById('stage').getContext('2d');
+    addSprite();
+    if (mode === 'teen') document.getElementById('script-editor').style.display = 'block';
+  };
+
+  // Sprite logic
+  function drawAllSprites() {
+    ctx.clearRect(0, 0, 400, 300);
+    for (let s of sprites) {
+      if (!s.visible) continue;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 20, 0, Math.PI * 2);
+      ctx.fillStyle = s.color;
+      ctx.fill();
     }
   }
 
-  function toggleDrawCanvas() {
-    if (!isDrawingSprite) {
-      drawCanvas.style.display = "block";
-      drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-      drawCtx.fillStyle = "#fff";
-      drawCtx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
-      isDrawingSprite = true;
-    } else {
-      const image = new Image();
-      image.src = drawCanvas.toDataURL();
-      image.onload = () => addSprite(image);
-      drawCanvas.style.display = "none";
-      isDrawingSprite = false;
+  window.addSprite = function() {
+    const colors = ["#ff9900", "#33cc33", "#0099ff", "#ff33cc"];
+    const sprite = { x: 200, y: 150, color: colors[sprites.length % colors.length], visible: true };
+    sprites.push(sprite);
+    selectedSprite = sprite;
+    drawAllSprites();
+  };
+
+  window.deleteSprite = function() {
+    if (selectedSprite) {
+      sprites = sprites.filter(s => s !== selectedSprite);
+      selectedSprite = null;
+      drawAllSprites();
     }
-  }
+  };
 
-  drawCanvas.addEventListener("mousedown", e => { drawing = true; drawCtx.beginPath(); });
-  drawCanvas.addEventListener("mouseup", () => drawing = false);
-  drawCanvas.addEventListener("mousemove", e => {
-    if (!drawing) return;
-    const rect = drawCanvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    drawCtx.lineTo(x, y);
-    drawCtx.strokeStyle = "#000";
-    drawCtx.lineWidth = 3;
-    drawCtx.lineCap = "round";
-    drawCtx.stroke();
-  });
+  window.drawSprite = function() {
+    alert("🖌️ Sprite drawing tool coming soon!");
+  };
 
-  function drawStage() {
-    ctx.clearRect(0, 0, stage.width, stage.height);
-    for (let s in sprites) {
-      const sp = sprites[s];
-      if (!sp.visible) continue;
-      ctx.save();
-      ctx.translate(sp.x, sp.y);
-      ctx.rotate((sp.angle || 0) * Math.PI / 180);
-      if (sp.img) {
-        ctx.drawImage(sp.img, -25, -25, 50, 50);
-      } else {
-        ctx.fillStyle = sp.color;
-        ctx.beginPath();
-        ctx.arc(0, 0, 20, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-  }
+  // Blockly runtime
+  window.generateCode = function() {
+    const code = Blockly.JavaScript.workspaceToCode(workspace);
+    if (currentMode === 'teen') document.getElementById('script-editor').textContent = code;
+    console.log(code);
+  };
 
-  function generateCode() {
-    const js = Blockly.JavaScript.workspaceToCode(workspace);
-    if (currentMode === 'teen') document.getElementById('script-editor').textContent = js;
-  }
-
-  function initApi(interpreter, globalObject) {
-    interpreter.setProperty(globalObject, 'moveSprite', interpreter.createNativeFunction((name, steps) => {
-      if (!sprites[name]) return;
-      const s = sprites[name];
-      s.x += Math.cos((s.angle || 0) * Math.PI / 180) * steps;
-      s.y += Math.sin((s.angle || 0) * Math.PI / 180) * steps;
-      drawStage();
-    }));
-    interpreter.setProperty(globalObject, 'turnSprite', interpreter.createNativeFunction((name, deg) => {
-      if (!sprites[name]) return;
-      sprites[name].angle = (sprites[name].angle + deg) % 360;
-      drawStage();
-    }));
-    interpreter.setProperty(globalObject, 'setSpriteVisible', interpreter.createNativeFunction((name, vis) => {
-      if (!sprites[name]) return;
-      sprites[name].visible = vis;
-      drawStage();
-    }));
-    interpreter.setProperty(globalObject, 'say', interpreter.createNativeFunction((name, text) => {
-      if (!sprites[name]) return;
-      alert(name + " says: " + text);
-    }));
-  }
-
-  function runCode() {
+  window.runCode = function() {
+    running = true;
     const code = Blockly.JavaScript.workspaceToCode(workspace);
     try {
-      interpreter = new Interpreter(code, initApi);
-      interpreter.run();
-    } catch (err) {
-      alert("Error: " + err.message);
+      eval(code);
+    } catch (e) {
+      alert("Error: " + e.message);
     }
-  }
+  };
 
-  function stopCode() {
-    clearTimeout(runTimer);
-    interpreter = null;
-  }
+  window.stopCode = function() {
+    running = false;
+  };
 
-  function getRandomColor() {
-    return `hsl(${Math.random() * 360}, 80%, 60%)`;
-  }
+  // Sprite actions
+  window.moveSprite = function(steps) {
+    if (selectedSprite) {
+      selectedSprite.x += steps;
+      drawAllSprites();
+    }
+  };
+
+  window.spriteSay = function(text) {
+    if (selectedSprite) alert("Sprite says: " + text);
+  };
+
+  window.setVisible = function(visible) {
+    if (selectedSprite) {
+      selectedSprite.visible = visible;
+      drawAllSprites();
+    }
+  };
+});
 </script>
 
 </body>
