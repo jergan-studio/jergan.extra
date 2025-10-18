@@ -76,4 +76,187 @@
 <script>
   let workspace, interpreter, currentMode = 'young', runTimer;
   const stage = document.getElementById('stage');
-  const ctx = stage.getContext(
+  const ctx = stage.getContext('2d');
+  const drawCanvas = document.getElementById('draw-canvas');
+  const drawCtx = drawCanvas.getContext('2d');
+  let drawing = false;
+
+  const sprites = {};
+  let spriteCount = 0;
+  let selectedSprite = null;
+  let isDrawingSprite = false;
+
+  function startMode(mode) {
+    currentMode = mode;
+    document.getElementById('age-picker').style.display = 'none';
+    document.getElementById('main-editor').style.display = 'block';
+    initBlockly();
+    if (mode === 'teen') document.getElementById('script-editor').style.display = 'block';
+    addSprite(); // default sprite
+    drawStage();
+  }
+
+  function initBlockly() {
+    const toolbox = `
+      <xml>
+        <category name="Events" colour="#FFBF00">
+          <block type="event_when_flag_clicked"></block>
+        </category>
+        <category name="Sprites" colour="#FF7F00">
+          <block type="sprite_move"></block>
+          <block type="sprite_turn"></block>
+          <block type="sprite_show"></block>
+          <block type="sprite_hide"></block>
+        </category>
+        <category name="Looks" colour="#9966FF">
+          <block type="looks_say"></block>
+        </category>
+        <category name="Text" colour="#5CA6A6">
+          <block type="text"></block>
+          <block type="text_print"></block>
+        </category>
+        <category name="Control" colour="#FFAB19">
+          <block type="controls_repeat_ext">
+            <value name="TIMES"><shadow type="math_number"><field name="NUM">5</field></shadow></value>
+          </block>
+        </category>
+      </xml>
+    `;
+
+    workspace = Blockly.inject('blocklyDiv', { toolbox, trashcan: true });
+
+    Blockly.defineBlocksWithJsonArray([
+      { type: "event_when_flag_clicked", message0: "when flag clicked", nextStatement: null, colour: "#FFBF00" },
+      { type: "sprite_move", message0: "move %1 steps", args0: [{ type: "input_value", name: "STEPS" }], previousStatement: null, nextStatement: null, colour: "#FF7F00" },
+      { type: "sprite_turn", message0: "turn %1 degrees", args0: [{ type: "input_value", name: "DEGREES" }], previousStatement: null, nextStatement: null, colour: "#FF7F00" },
+      { type: "sprite_show", message0: "show sprite", previousStatement: null, nextStatement: null, colour: "#FF7F00" },
+      { type: "sprite_hide", message0: "hide sprite", previousStatement: null, nextStatement: null, colour: "#FF7F00" },
+      { type: "looks_say", message0: "say %1", args0: [{ type: "input_value", name: "TEXT" }], previousStatement: null, nextStatement: null, colour: "#9966FF" }
+    ]);
+
+    Blockly.JavaScript['sprite_move'] = b => `moveSprite('${selectedSprite}', ${Blockly.JavaScript.valueToCode(b, 'STEPS', Blockly.JavaScript.ORDER_NONE) || 10});\n`;
+    Blockly.JavaScript['sprite_turn'] = b => `turnSprite('${selectedSprite}', ${Blockly.JavaScript.valueToCode(b, 'DEGREES', Blockly.JavaScript.ORDER_NONE) || 15});\n`;
+    Blockly.JavaScript['sprite_show'] = () => `setSpriteVisible('${selectedSprite}', true);\n`;
+    Blockly.JavaScript['sprite_hide'] = () => `setSpriteVisible('${selectedSprite}', false);\n`;
+    Blockly.JavaScript['looks_say'] = b => `say('${selectedSprite}', ${Blockly.JavaScript.valueToCode(b, 'TEXT', Blockly.JavaScript.ORDER_NONE) || '"Hello!"'});\n`;
+    Blockly.JavaScript['event_when_flag_clicked'] = () => '';
+  }
+
+  function addSprite(image = null) {
+    const name = "sprite" + (++spriteCount);
+    sprites[name] = {
+      x: 150, y: 150, visible: true, angle: 0, img: image, color: getRandomColor()
+    };
+    selectedSprite = name;
+    drawStage();
+  }
+
+  function deleteSprite() {
+    if (selectedSprite && sprites[selectedSprite]) {
+      delete sprites[selectedSprite];
+      selectedSprite = Object.keys(sprites)[0] || null;
+      drawStage();
+    }
+  }
+
+  function toggleDrawCanvas() {
+    if (!isDrawingSprite) {
+      drawCanvas.style.display = "block";
+      drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+      drawCtx.fillStyle = "#fff";
+      drawCtx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+      isDrawingSprite = true;
+    } else {
+      const image = new Image();
+      image.src = drawCanvas.toDataURL();
+      image.onload = () => addSprite(image);
+      drawCanvas.style.display = "none";
+      isDrawingSprite = false;
+    }
+  }
+
+  drawCanvas.addEventListener("mousedown", e => { drawing = true; drawCtx.beginPath(); });
+  drawCanvas.addEventListener("mouseup", () => drawing = false);
+  drawCanvas.addEventListener("mousemove", e => {
+    if (!drawing) return;
+    const rect = drawCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    drawCtx.lineTo(x, y);
+    drawCtx.strokeStyle = "#000";
+    drawCtx.lineWidth = 3;
+    drawCtx.lineCap = "round";
+    drawCtx.stroke();
+  });
+
+  function drawStage() {
+    ctx.clearRect(0, 0, stage.width, stage.height);
+    for (let s in sprites) {
+      const sp = sprites[s];
+      if (!sp.visible) continue;
+      ctx.save();
+      ctx.translate(sp.x, sp.y);
+      ctx.rotate((sp.angle || 0) * Math.PI / 180);
+      if (sp.img) {
+        ctx.drawImage(sp.img, -25, -25, 50, 50);
+      } else {
+        ctx.fillStyle = sp.color;
+        ctx.beginPath();
+        ctx.arc(0, 0, 20, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  function generateCode() {
+    const js = Blockly.JavaScript.workspaceToCode(workspace);
+    if (currentMode === 'teen') document.getElementById('script-editor').textContent = js;
+  }
+
+  function initApi(interpreter, globalObject) {
+    interpreter.setProperty(globalObject, 'moveSprite', interpreter.createNativeFunction((name, steps) => {
+      if (!sprites[name]) return;
+      const s = sprites[name];
+      s.x += Math.cos((s.angle || 0) * Math.PI / 180) * steps;
+      s.y += Math.sin((s.angle || 0) * Math.PI / 180) * steps;
+      drawStage();
+    }));
+    interpreter.setProperty(globalObject, 'turnSprite', interpreter.createNativeFunction((name, deg) => {
+      if (!sprites[name]) return;
+      sprites[name].angle = (sprites[name].angle + deg) % 360;
+      drawStage();
+    }));
+    interpreter.setProperty(globalObject, 'setSpriteVisible', interpreter.createNativeFunction((name, vis) => {
+      if (!sprites[name]) return;
+      sprites[name].visible = vis;
+      drawStage();
+    }));
+    interpreter.setProperty(globalObject, 'say', interpreter.createNativeFunction((name, text) => {
+      if (!sprites[name]) return;
+      alert(name + " says: " + text);
+    }));
+  }
+
+  function runCode() {
+    const code = Blockly.JavaScript.workspaceToCode(workspace);
+    try {
+      interpreter = new Interpreter(code, initApi);
+      interpreter.run();
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+  }
+
+  function stopCode() {
+    clearTimeout(runTimer);
+    interpreter = null;
+  }
+
+  function getRandomColor() {
+    return `hsl(${Math.random() * 360}, 80%, 60%)`;
+  }
+</script>
+
+</body>
+</html>
