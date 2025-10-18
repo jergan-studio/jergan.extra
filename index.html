@@ -237,7 +237,18 @@ window.addEventListener("DOMContentLoaded", () => {
     initBlockly();
     ctx = document.getElementById('stage').getContext('2d');
     setupDragging();
-    addSprite();
+
+    // ✅ Starter sprite: Scratch profile of jergan-studio
+    const starter = new Image();
+    starter.src = "https://uploads.scratch.mit.edu/users/avatars/jergan-studio.png";
+    starter.onload = () => {
+      const sprite = { x: 200, y: 150, visible: true, image: starter, name: "Jergan" };
+      sprites.push(sprite);
+      selectedSprite = sprite;
+      updateSpriteSelect();
+      drawAllSprites();
+    };
+
     if (mode === 'teen') document.getElementById('script-editor').style.display = 'block';
   };
 
